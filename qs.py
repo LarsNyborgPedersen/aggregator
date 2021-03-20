@@ -2,6 +2,7 @@ import requests
 import os
 from datetime import date, datetime, timedelta as td
 import pandas as pd
+import json
 
 #For Google Sheets
 from oauth2client.service_account import ServiceAccountCredentials
@@ -26,13 +27,15 @@ start_date = '2020-12-19'  # Start date for additional data export
 end_date   = '2020-12-22'  # End date for data
 
 # Adjustable by Time Period
-def rescuetime_get_activities(start_date, end_date, sheet, resolution='hour'):
+def rescuetime_get_activities(start_date, end_date, sheet, resolution='minute'):
 
 
     #Find last added date and current date
     lastRowIndex = len(sheet.col_values(1))
     lastRow = sheet.row_values(lastRowIndex)
-    lastRowDate = lastRow[0][0:10]
+    lastRowDate = lastRow[0]
+    dayAfterLastDate = pd.to_datetime(lastRowDate) + td(days=1)
+    dayAfterLastDateString = dayAfterLastDate.strftime("%Y-%m-%d")
     yesterday = (date.today()-td(days=1)).strftime("%Y-%m-%d")
 
     # Configuration for Query
@@ -41,7 +44,7 @@ def rescuetime_get_activities(start_date, end_date, sheet, resolution='hour'):
         'perspective':'interval',
         'resolution_time': resolution, #1 of "month", "week", "day", "hour", "minute"
         'restrict_kind':'document',
-        'restrict_begin': lastRowDate,
+        'restrict_begin': dayAfterLastDateString,
         'restrict_end': yesterday,
         'format':'json' #csv
     }
@@ -76,9 +79,9 @@ def rescuetime_get_activities(start_date, end_date, sheet, resolution='hour'):
                 activities_list.append(i)
         else:
             print("Appears there is no RescueTime data for " + str(d3))
-
+    
     #Reorder list
-    order = [0, 3, 4, 0, 5, 1]    
+    order = [0, 3, 4, 2, 5, 1]    
 
     result = [] 
     for a in activities_list:
@@ -87,60 +90,73 @@ def rescuetime_get_activities(start_date, end_date, sheet, resolution='hour'):
 
     return result
 
-def authorize_sheets():
-    scopesGoogleSheets = ["https://spreadsheets.google.com/feeds",'https://www.googleapis.com/auth/spreadsheets',"https://www.googleapis.com/auth/drive.file","https://www.googleapis.com/auth/drive"]
-    creds = ServiceAccountCredentials.from_json_keyfile_name("creds_sheets.json", scopesGoogleSheets)
+def authorize_sheets(sheet_name):
+    scopes_google_sheets = ["https://spreadsheets.google.com/feeds",'https://www.googleapis.com/auth/spreadsheets',"https://www.googleapis.com/auth/drive.file","https://www.googleapis.com/auth/drive"]
+    creds = ServiceAccountCredentials.from_json_keyfile_name("creds_sheets.json", scopes_google_sheets)
     client = gspread.authorize(creds)
-    sheet = client.open("RescueTime new").sheet1  # Open the spreadhseet
+    sheet = client.open(sheet_name).sheet1
 
     return sheet
 
-def insert_into_sheets(activities_list, sheet):
-    for activity in activities_list:
-        #print("Activity 0: "+ str(activity[0]))
-        #print("Activity 1: "+ str(activity[1]))
-        #print("Activity 2: "+ str(activity[2]))
-        #print("Activity 3: "+ str(activity[3]))
-        #print("Activity 4: ".encode('utf-8')+ str(activity[4]).encode('utf-8'))
-        #sheet.insert_row([activity[0], activity[1]])
-    sheet.insert_rows(activities_list)
+def insert_into_sheets(list_to_insert, sheet):
+    sheet.insert_rows(list_to_insert, row=len(sheet.col_values(1))+1)
 
-
-def rescuetime_get_activities_daily_summaries(start_date, end_date, resolution='hour'):
+def rescuetime_get_activities_daily_summaries(sheet):
     #Daily summaries
     baseurl = "https://www.rescuetime.com/anapi/daily_summary_feed?key="
     url = baseurl + KEY
-    # Request
+    
     try: 
-        r = requests.get(url) # Make Request
-        iter_result = r.json() # Parse result
-        # print("Collecting Activities for " + str(d3))
+        r = requests.get(url) 
+        iter_result = r.json()
+        print("Collecting daily summaries")
     except: 
-        print("Error collecting data for " + str(d3))
-
-    index = 0
+        print("Error collecting daily summaries")
+    
+    results = []
     for result in iter_result:
-        print(result)
-
-        print("index is = " + str(index))
-        index+=1
-
-
+        results.append(list(result.values()))
+    
+    #Only add the days that aren't present
+    last_row_date = sheet.col_values(2)[-1]
 
 
+    return results
+    
 
-# Defining main function 
-def main(): 
-    sheet = authorize_sheets()
+#Used this temporarily to make the date format between the downloaded and from the API consistent.
+def makeDateFormatConsistent(sheet):
+    dates = sheet.col_values(1)
+    incorrectDates = []
+    for date in dates:
+        if(not "T" in date and not "Date" in date):
+            incorrectDates.append(date)
+
+    newDates = []
+    for date in incorrectDates:
+        date = date[0:19]
+        date = datetime.strptime(date, "%Y-%m-%d %H:%M:%S")
+        #make this format 2021-02-17T07:30:00
+        date = date.strftime("%Y-%m-%dT%H:%M:%S")
+        #print(date)
+        newDates.append(date)
+    nestedArray = []
+    for array in newDates:
+        nestedArray.append([array])
+    sheet.insert_rows(nestedArray, row=2)
+
+
+
+def main():
+    #Export daily summaries
+    sheet = authorize_sheets("RescueTime - Daily summaries")
+    daily_summaries = rescuetime_get_activities_daily_summaries(sheet)
+    insert_into_sheets(daily_summaries, sheet)
+
+    #Export detailed data
+    sheet = authorize_sheets("RescueTime")
     activities_list = rescuetime_get_activities(start_date, end_date, sheet)
-
-    #for activity in activities_list:
-        #print(activity)
-
     insert_into_sheets(activities_list, sheet)
   
-  
-# Using the special variable  
-# __name__ 
 if __name__=="__main__": 
     main() 
