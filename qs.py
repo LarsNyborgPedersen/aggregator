@@ -3,6 +3,9 @@ import os
 from datetime import date, datetime, timedelta as td
 import pandas as pd
 import json
+from collections import defaultdict
+from dateutil import parser
+
 
 #For Google Sheets
 from oauth2client.service_account import ServiceAccountCredentials
@@ -112,13 +115,18 @@ def rescuetime_get_activities_daily_summaries(sheet):
         print("Collecting daily summaries")
     except: 
         print("Error collecting daily summaries")
-    
-    results = []
-    for result in iter_result:
-        results.append(list(result.values()))
-    
+
     #Only add the days that aren't present
     last_row_date = sheet.col_values(2)[-1]
+    
+    results = []
+    for result in reversed(iter_result):
+        print(datetime.now().strftime("%Y-%m-%d"))
+        if (parser.parse(result["date"]) > parser.parse(last_row_date)):
+            results.append(list(result.values()))
+    
+    
+
 
 
     return results
